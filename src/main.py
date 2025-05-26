@@ -19,10 +19,54 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 # === ПОИСК ПО АРТИКУЛАМ ===
 import re
 
+import re
+
 def find_best_matches(user_input):
-    # 1. Извлекаем все потенциальные артикулы (5+ цифр подряд, с пробелами)
-    raw_matches = re.findall(r'[\d\s]{5,15}', user_input)
-    cleaned_inputs = [x.replace(" ", "").lower() for x in raw_matches if len(x.strip()) >= 5]
+    # 1. Ключевые слова
+    keywords = ['артикул', 'арт', 'код', 'поз', 'позиция', 'номер']
+
+    # 2. Приводим текст к нижнему регистру
+    text = user_input.lower()
+
+    # 3. Ищем "ключевое слово + число"
+    pattern = r'(' + '|'.join(keywords) + r')\s*[:\-]?\s*([\d\s]{5,15})'
+    matches = re.findall(pattern, text)
+
+    # 4. Извлекаем числа
+    cleaned_inputs = [m[1].replace(" ", "") for m in matches if len(m[1].strip()) >= 5]
+
+    # 5. Если ничего не нашли по ключам — fallback: ищем любые числа от 5 символов
+    if not cleaned_inputs:
+        raw_matches = re.findall(r'[\d\s]{5,15}', text)
+        cleaned_inputs = [x.replace(" ", "") for x in raw_matches if len(x.strip()) >= 5]
+
+    if not cleaned_inputs:
+        return "⛔️ Не удалось найти артикул в сообщении."
+
+    # 6. Сравниваем с базой
+    df['Артикул_clean'] = df['Артикул'].astype(str).str.replace(" ", "").str.lower()
+    found_rows = df[df['Артикул_clean'].isin(cleaned_inputs)]
+
+    if found_rows.empty:
+        return "❌ Ни один артикул не найден в базе."
+
+    # 7. Убираем дубликаты
+    unique_rows = found_rows.drop_duplicates(subset='Артикул_clean', keep='first')
+
+    # 8. Формируем ответ
+    results = []
+    for _, row in unique_rows.iterrows():
+        results.append(
+            f"📦 Артикул: {row['Артикул']}\n"
+            f"Наименование: {row.get('Номенклатура', '—')}\n"
+            f"Код: {row.get('Номенклатура.Код', '—')}\n"
+            f"Склад: {row.get('Склад', '—')}\n"
+            f"Остаток: {row.get('Остаток', '—')}\n"
+            f"Цена: {row.get('Цена', '—')} {row.get('Валюта', '')}\n"
+        )
+
+    return "\n".join(results[:10]) + ("\n...и т.д." if len(results) > 10 else "")
+
 
     if not cleaned_inputs:
         return "⛔️ В сообщении не найден ни один артикул."
