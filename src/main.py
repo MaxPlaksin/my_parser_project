@@ -81,4 +81,5 @@ def handle_message(message):
 
 # === ЗАПУСК ===
 print("✅ Бот запущен и ждёт запросы...")
-bot.polling()
+bot.polling(non_stop=True, timeout=60, long_polling_timeout=30)
+
