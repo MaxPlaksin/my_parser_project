@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # === НАСТРОЙКИ ===
 TELEGRAM_TOKEN = '7136103155:AAHS8y4z7CsdSpddDddU6p60TM8dTFElXmY'
-HTML_FILE = 'для бота (HTML4).html'
+EXCEL_FILE = 'Остатки2.xlsx'
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -54,16 +54,12 @@ def safe_get(row, col, default='—'):
 
 def load_database():
     try:
-        logger.info(f"📂 Загружаю HTML-файл {HTML_FILE}...")
-        if not os.path.exists(HTML_FILE):
-            logger.error(f"Файл {HTML_FILE} не найден.")
+        logger.info(f"📂 Загружаю Excel-файл {EXCEL_FILE}...")
+        if not os.path.exists(EXCEL_FILE):
+            logger.error(f"Файл {EXCEL_FILE} не найден.")
             return None
 
-        tables = pd.read_html(HTML_FILE)
-        df_local = tables[0]
-
-        df_local.columns = df_local.iloc[0].map(str).str.strip()
-        df_local = df_local.iloc[1:].reset_index(drop=True)
+        df_local = pd.read_excel(EXCEL_FILE, sheet_name=0)
         df_local = df_local.astype(str)
 
         # Создаем два столбца для поиска: один для простых артикулов, другой для составных
@@ -189,7 +185,7 @@ def find_best_matches(user_input, df_data):
 @bot.message_handler(commands=['start', 'help'])
 def handle_start_help(message):
     help_text = (
-        "🔍 *Бот для поиска товаров по артикулу (HTML-база)*\n\n"
+        "🔍 *Бот для поиска товаров по артикулу (Excel-база)*\n\n"
         "Отправьте мне артикул товара — и я найду его в базе.\n"
         "Примеры:\n"
         "`805015`\n"
@@ -204,12 +200,12 @@ def handle_start_help(message):
 @bot.message_handler(commands=['reload'])
 def handle_reload(message):
     global df
-    bot.send_message(message.chat.id, "🔄 Перезагружаю HTML-базу...")
+    bot.send_message(message.chat.id, "🔄 Перезагружаю Excel-базу...")
     df = load_database()
     if df is not None:
         bot.send_message(message.chat.id, f"✅ База загружена. Записей: {len(df)}")
     else:
-        bot.send_message(message.chat.id, "❌ Не удалось загрузить HTML-базу.")
+        bot.send_message(message.chat.id, "❌ Не удалось загрузить Excel-базу.")
 
 
 @bot.message_handler(func=lambda message: True)
@@ -231,7 +227,7 @@ def handle_message(message):
 if __name__ == "__main__":
     run_scheduled_check()
     df = load_database()
-    print("✅ HTML-бот запущен и ждёт запросы...")
+    print("✅ Excel-бот запущен и ждёт запросы...")
     try:
         bot.polling(non_stop=True, timeout=60, long_polling_timeout=30)
     except Exception as e:
