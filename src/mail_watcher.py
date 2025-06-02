@@ -1,8 +1,9 @@
 import imaplib
 import email
 import os
+import re
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import threading
 import importlib
@@ -15,9 +16,8 @@ PASSWORD = 'K7cAiTCjvVn50YiHqdnp'
 IMAP_SERVER = 'imap.mail.ru'
 CHECK_INTERVAL_SECONDS = 600  # 10 минут между проверками
 MAILBOX = 'INBOX'
-ALLOWED_SENDERS = ['almazgeobur.it@mail.ru']
-EXCEL_DIRECTORY = 'downloaded_files'
-TARGET_EXCEL_NAME = 'для бота.xlsx'  # Имя файла, которое будет использоваться
+EXCEL_FILENAME = 'для бота.xlsx'  # Фиксированное имя для сохранения
+TARGET_SUBJECTS = ['Остатки бот от', '1С УТ']  # Ключевые слова в теме письма
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,44 +30,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def setup_environment():
-    """Создает необходимые директории"""
-    if not os.path.exists(EXCEL_DIRECTORY):
-        os.makedirs(EXCEL_DIRECTORY)
+def decode_mail_header(header):
+    """Декодирует заголовки писем"""
+    decoded = decode_header(header)
+    return ''.join(
+        str(t[0], t[1] or 'utf-8') if isinstance(t[0], bytes) else str(t[0])
+        for t in decoded
+    )
 
 
-def clean_filename(filename):
-    """Очищает имя файла от недопустимых символов"""
-    invalid_chars = '<>:"/\\|?*'
-    for char in invalid_chars:
-        filename = filename.replace(char, '_')
-    return filename
+def is_target_email(msg):
+    """Проверяет, является ли письмо целевым"""
+    subject = decode_mail_header(msg.get('Subject', ''))
+    from_email = msg.get('From', '')
 
+    # Проверяем по теме письма
+    is_target_subject = any(keyword in subject for keyword in TARGET_SUBJECTS)
 
-def is_valid_excel(filepath):
-    """Проверяет валидность Excel-файла"""
-    try:
-        pd.read_excel(filepath, nrows=1)
-        return True
-    except Exception as e:
-        logger.error(f"Файл не является валидным Excel: {e}")
-        return False
+    # Дополнительная проверка для писем от 1С УТ
+    is_1c_ut = ('1С УТ' in subject) and ('almazgeobur.it@mail.ru' in from_email)
+
+    return is_target_subject or is_1c_ut
 
 
 def download_latest_excel():
-    """Скачивает последний Excel-файл из почты"""
+    """Скачивает последний Excel-файл из целевого письма"""
     try:
-        setup_environment()
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
         mail.login(EMAIL, PASSWORD)
+        mail.select(MAILBOX)
 
-        # Выбираем почтовый ящик
-        status, _ = mail.select(MAILBOX)
-        if status != 'OK':
-            logger.error("Не удалось выбрать почтовый ящик")
-            return False
-
-        # Ищем все письма (отсортированные по дате, новые первыми)
+        # Ищем все письма, сортируем от новых к старым
         status, messages = mail.search(None, 'ALL')
         if status != 'OK':
             logger.warning("Не удалось выполнить поиск писем")
@@ -78,74 +71,42 @@ def download_latest_excel():
             logger.info("Нет писем в ящике")
             return False
 
-        # Берем самое последнее письмо (первое в списке)
-        latest_msg_id = message_ids[0]
-
-        status, msg_data = mail.fetch(latest_msg_id, '(RFC822)')
-        if status != 'OK':
-            logger.warning("Не удалось получить письмо")
-            return False
-
-        msg = email.message_from_bytes(msg_data[0][1])
-        sender = email.utils.parseaddr(msg.get('From', ''))[1]
-
-        # Проверяем отправителя
-        if ALLOWED_SENDERS and sender not in ALLOWED_SENDERS:
-            logger.warning(f"Письмо от недоверенного отправителя: {sender}")
-            return False
-
-        # Ищем вложения
-        for part in msg.walk():
-            if part.get_content_maintype() == 'multipart':
+        # Перебираем письма от новых к старым
+        for msg_id in message_ids[::-1]:
+            status, msg_data = mail.fetch(msg_id, '(RFC822)')
+            if status != 'OK':
                 continue
 
-            filename = part.get_filename()
-            if not filename:
+            msg = email.message_from_bytes(msg_data[0][1])
+
+            # Пропускаем письма, которые не соответствуют критериям
+            if not is_target_email(msg):
                 continue
 
-            # Декодируем имя файла
-            decoded_filename = decode_header(filename)
-            filename = ''.join(
-                str(t[0], t[1] or 'utf-8') if isinstance(t[0], bytes) else str(t[0])
-                for t in decoded_filename
-            )
+            logger.info(f"Обработка письма: {decode_mail_header(msg.get('Subject', ''))}")
 
-            # Очищаем имя файла
-            filename = clean_filename(filename)
+            # Поиск вложений
+            for part in msg.walk():
+                if part.get_content_maintype() == 'multipart':
+                    continue
 
-            if not filename.lower().endswith('.xlsx'):
-                continue
+                filename = part.get_filename()
+                if not filename:
+                    continue
 
-            try:
+                filename = decode_mail_header(filename)
+                if not filename.lower().endswith('.xlsx'):
+                    continue
+
+                # Сохраняем файл
                 file_content = part.get_payload(decode=True)
-                temp_path = os.path.join(EXCEL_DIRECTORY, 'temp_' + filename)
-                final_path = os.path.join(EXCEL_DIRECTORY, TARGET_EXCEL_NAME)
-
-                # Сохраняем временный файл
-                with open(temp_path, 'wb') as f:
+                with open(EXCEL_FILENAME, 'wb') as f:
                     f.write(file_content)
 
-                # Проверяем валидность
-                if is_valid_excel(temp_path):
-                    # Удаляем старый файл, если существует
-                    if os.path.exists(final_path):
-                        os.remove(final_path)
+                logger.info(f"Файл {filename} сохранен как {EXCEL_FILENAME}")
+                return True
 
-                    # Переименовываем временный файл в целевое имя
-                    os.rename(temp_path, final_path)
-                    logger.info(f"Файл успешно сохранен как: {TARGET_EXCEL_NAME}")
-                    return True
-                else:
-                    os.remove(temp_path)
-                    logger.warning("Файл не прошел проверку валидности")
-
-            except Exception as e:
-                logger.error(f"Ошибка обработки файла: {e}")
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                return False
-
-        logger.info("В письме не найдено подходящего Excel-файла")
+        logger.info("Не найдено подходящих писем с Excel-файлами")
         return False
 
     except Exception as e:
@@ -176,7 +137,7 @@ def run_scheduled_check():
 
     def loop():
         while True:
-            logger.info("Проверка нового письма...")
+            logger.info("Проверка новых писем...")
             if download_latest_excel():
                 reload_main_module()
             time.sleep(CHECK_INTERVAL_SECONDS)
