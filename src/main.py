@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # === НАСТРОЙКИ ===
 TELEGRAM_TOKEN = '7136103155:AAHS8y4z7CsdSpddDddU6p60TM8dTFElXmY'
-EXCEL_FILE = 'Остатки2.xlsx'
+EXCEL_FILE = 'для бота.XLSX'
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
